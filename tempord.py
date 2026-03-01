@@ -1,0 +1,265 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from itertools import combinations
+
+from utils import _scale_segment, _adj_r2_simple_lm
+
+
+def get_causal_vector(tempord_values: pd.DataFrame, thr: float) -> pd.DataFrame:
+    """
+    Extract causal vectors from temporal ordering values based on a threshold.
+    This function identifies the shift value corresponding to the maximum value
+    in each column of the input DataFrame, subject to a threshold constraint.
+    Parameters
+    ----------
+    tempord_values : pd.DataFrame
+        A DataFrame containing temporal ordering values where:
+        - Index represents shift values
+        - Columns represent points
+        - Values are numeric (float)
+    thr : float
+        Threshold value for filtering. Columns with maximum values below this
+        threshold are skipped. If thr < 0, the threshold check is bypassed.
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame with two columns:
+        - "Points": The column names from the input DataFrame (as float)
+        - "Max": The shift values corresponding to the maximum in each column,
+                 or NaN if the column's maximum is below the threshold
+    """
+
+
+    shifts = tempord_values.index.to_numpy(dtype=float)
+    points = tempord_values.columns.to_numpy(dtype=float)
+
+    causal_vectors = np.full(len(points), np.nan, dtype=float)
+
+    for i, point in enumerate(points):
+        col = tempord_values[point].to_numpy(dtype=float)
+
+        col_max = np.nanmax(col)
+        if thr >= 0 and col_max < thr:
+            continue
+
+        j = int(np.nanargmax(col))
+        causal_vectors[i] = shifts[j]
+
+    max_df = pd.DataFrame(
+        {
+            "Points": points.astype(float),
+            "Max": causal_vectors.astype(float),
+        }
+    )
+
+    return max_df
+
+
+def make_plot(
+    tempord_values: pd.DataFrame,
+    max_df: pd.DataFrame,
+    col1: str,
+    col2: str,
+    max_shift_seconds: tuple,
+    fs: int,
+    signal_length_samples: int,
+) -> plt.Figure:
+    """
+    Creates a heatmap visualization of temporal order values with maximum shift curve overlay.
+
+    Parameters
+    ----------
+    tempord_values : pd.DataFrame
+        DataFrame containing temporal order values where columns represent time points
+        and rows represent shift values. Values should be in range [0, 1].
+    max_df : pd.DataFrame
+        DataFrame containing maximum values across shifts with columns 'Points' (time points)
+        and 'Max' (maximum temporal order values).
+    col1 : str
+        Name of the first signal used in the temporal order analysis.
+    col2 : str
+        Name of the second signal used in the temporal order analysis.
+    max_shift_seconds : tuple
+        Tuple of (min_shift, max_shift) in seconds defining the range of shifts to display.
+    fs : int
+        Sampling frequency in Hz used for converting between samples and time units.
+    signal_length_samples : int
+        Total length of the signal in samples.
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure object containing the temporal order heatmap with overlaid
+        maximum values curve.
+
+    Notes
+    -----
+    The heatmap uses a diverging colormap (RdBu) with values normalized to [0, 1].
+    Y-axis shows shift values in seconds, X-axis shows time in minutes.
+    A black line plots the maximum temporal order values across all shifts.
+    """
+
+    fig, ax = plt.subplots()
+
+    # Extract numeric axis values from DataFrame
+    x_vals = tempord_values.columns.to_numpy(dtype=float)
+    y_vals = tempord_values.index.to_numpy(dtype=float)
+
+    # Display heatmap
+    ax.imshow(
+        tempord_values.values[::-1],
+        aspect="auto",
+        extent=[x_vals.min(), x_vals.max(), y_vals.min(), y_vals.max()],
+        origin="lower",  # First row is drawn at the bottom
+        cmap="RdBu",
+        vmin=0,
+        vmax=1,
+    )
+
+    # Plot the curve of maximum values across shifts
+    ax.plot(
+        max_df["Points"].values,
+        max_df["Max"].values,
+        linewidth=1.5,
+        color="k",
+    )
+    # Axis labels and title
+    ax.set_xlabel("Time [min]")
+    ax.set_ylabel("Shift [s]")
+
+    ax.set_title(f"Temporal orders (LM) - Signal 1: {col1}, Signal 2: {col2}")
+
+    # Y ticks: seconds
+    labels_y = np.arange(max_shift_seconds[0], max_shift_seconds[1] + 1, 1, dtype=int)
+    breaks_y = labels_y * fs
+    ax.set_yticks(breaks_y)
+    ax.set_yticklabels([str(x) for x in labels_y])
+
+    # X ticks: minutes of signal
+    samples_per_minute = fs * 60
+    breaks_x = list(
+        range(0, signal_length_samples + 1, samples_per_minute)
+    )  # 60 samples per minute times fs
+    if breaks_x[-1] != signal_length_samples:
+        breaks_x.append(signal_length_samples)
+    ax.set_xticks(breaks_x)
+    labels_x = [
+        str(int(b / samples_per_minute)) if b % samples_per_minute == 0 else ""
+        for b in breaks_x
+    ]
+    ax.set_xticklabels(labels_x)
+
+
+def tempord(
+    df: pd.DataFrame,
+    method: str,
+    thr: float,
+    scaling: int,
+    sig_length: float,
+    max_shift_seconds: tuple,
+    fs: int,
+    point_time_res: int = 1,
+    shift_time_res: int = 1,
+    make_figure: bool = True,
+    td_type: str = None,
+    **kwargs,
+):
+    """
+    Compute temporal order of signals using linear regression or time-series distance.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input signals with each column as a separate signal.
+    method : str
+        "LM" for linear regression or "TD" for time-series distance.
+    thr : float
+        Threshold for parameter values (≥0 applies thresholding; <0 means no threshold).
+    scaling : int
+        Scaling type: 0=none, 1=min-max, 2=z-score (segment-wise).
+    sig_length : float
+        Window length in seconds.
+    max_shift_seconds : tuple
+        (max_backward, max_forward) in seconds.
+    fs : int
+        Sampling frequency in Hz.
+    point_time_res : int, optional
+        Step of center points in samples (default: 1).
+    shift_time_res : int, optional
+        Step of shifts in samples (default: 1).
+    make_figure : bool, optional
+        Whether to create a matplotlib figure (default: True).
+    td_type : str or callable, optional
+        Distance metric name (str) or callable(a, b, **kwargs)->float for TD method.
+    **kwargs
+        Additional keyword arguments.
+
+    Returns
+    -------
+    dict
+        Dictionary with signal pair tuples as keys. Each value contains:
+        - "Tempord": pd.DataFrame of parameter matrix
+        - "Max": pd.DataFrame with values of shifts at which maximal parameter excided threshold for each point
+        - "Fig": matplotlib figure or None
+    """
+
+    pairs = list(combinations(df.columns, 2))
+
+    results = {}
+
+    window_samples = int(sig_length * fs)
+    shift_start = int(np.ceil(max_shift_seconds[0] * fs))
+    shift_end = int(np.ceil(max_shift_seconds[1] * fs))
+    shifts = np.arange(shift_start, shift_end + 1, int(shift_time_res), dtype=int)
+    start_point_left = int(fs * (-max_shift_seconds[0]) + window_samples / 2)
+    end_point_point_left = int(
+        len(df) - fs * (max_shift_seconds[1]) - window_samples / 2
+    )
+
+    if sig_length > len(df) / fs:
+        raise ValueError("Too long signal length...")
+    if max(max_shift_seconds) > sig_length / 2:
+        raise ValueError("Shift goes beyond analyzed signal part...")
+    if method not in ("LM", "TD"):
+        raise ValueError("Wrong method code chosen...")
+
+    # Central points (in samples) of the windows
+    points = np.arange(start_point_left, end_point_point_left + 1, point_time_res)
+    for col1, col2 in pairs:
+
+        sig1 = df[col1].to_numpy(dtype=float)
+        sig2 = df[col2].to_numpy(dtype=float)
+
+        # Inicialize parameter matrix (rows: points, columns: shifts)
+        param_mat = np.zeros((len(points), len(shifts)), dtype=float) * np.nan
+
+        for idx_x, start_left in enumerate(points):
+            s1_left = start_left - window_samples // 2
+            s1_right = start_left + window_samples // 2
+            for idx_y, shift in enumerate(shifts):
+                s2_left = s1_left + shift
+                s2_right = s1_right + shift
+                if s2_left < 0 or s2_right > len(sig2):
+                    continue  # skip invalid shifts
+                segment1 = _scale_segment(sig1[s1_left:s1_right], scaling)
+                segment2 = _scale_segment(sig2[s2_left:s2_right], scaling)
+                # Compute parameter for this point and shift
+                param_mat[idx_x, idx_y] = _adj_r2_simple_lm(segment1, segment2)
+
+        # Output dataframe in long format with positive
+        tempord_values = pd.DataFrame(
+            param_mat.T, columns=points.astype(int), index=shifts.astype(int)
+        ).iloc[::-1]
+
+        # Creating DataFrame for maxima of the parameter curve
+        max_df = get_causal_vector(tempord_values, thr)
+
+        fig = None
+        if make_figure:
+            make_plot(
+                tempord_values, max_df, col1, col2, max_shift_seconds, fs, len(sig1)
+            )
+        results[(col1, col2)] = {"Tempord": tempord_values, "Max": max_df, "Fig": fig}
+
+    return results
