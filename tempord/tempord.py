@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from itertools import combinations
 
-from utils import _scale_segment, _adj_r2_simple_lm
+from .utils import _scale_segment, _adj_r2_simple_lm
 
 
 def get_causal_vector(tempord_values: pd.DataFrame, thr: float) -> pd.DataFrame:
