@@ -1,11 +1,9 @@
 # tempord
 
-`tempord` is a small Python package for computing **temporal order** between pairs of time series signals.  It implements two methods originally developed in R:
-
-* Linear regression (`LM`) – computes adjusted R² between windows of two signals at varying shifts.
-* Time‑series distance (`TD`) – uses a user‑specified distance metric (Euclidean, Manhattan, Minkowski, or custom) to compare windows.
-
-The code is intended for research use and allows visualization of the resulting parameter matrices.
+`tempord` is a  Python package for computing **temporal order** between pairs of time series signals based on paper:
+```
+M. Młyńczak, "Temporal orders and causal vector for physiological data analysis," 2020 42nd Annual International Conference of the IEEE Engineering in Medicine & Biology Society (EMBC), Montreal, QC, Canada, 2020, pp. 750-753, doi: 10.1109/EMBC44109.2020.9176842.
+```
 
 ---
 
