@@ -9,6 +9,16 @@ M. Młyńczak, "Temporal orders and causal vector for physiological data analysi
 
 ## 📦 Installation
 
+You can install `tempord` from PyPI or clone the repository for development.
+
+### Option 1: Install from PyPI
+
+```bash
+pip install tempord
+```
+
+### Option 2: Clone and install from source
+
 1. **Clone the repository**
    ```bash
    git clone git@github.com:mrosol/tempord.git
