@@ -1,5 +1,8 @@
 import numpy as np
 import pandas as pd
+from scipy.spatial import distance
+import itertools
+import scipy.signal
 
 
 def _scale_segment(x: np.ndarray, scaling: int) -> np.ndarray:
@@ -59,9 +62,9 @@ def _adj_r2_simple_lm(x: np.ndarray, y: np.ndarray) -> float:
     """
     Calculate the adjusted R-squared for a simple linear regression model.
 
-    This function computes the adjusted coefficient of determination (R²) for a 
-    simple linear regression with one predictor variable. The adjusted R² penalizes 
-    the model for the number of predictors and is useful for comparing models with 
+    This function computes the adjusted coefficient of determination (R²) for a
+    simple linear regression with one predictor variable. The adjusted R² penalizes
+    the model for the number of predictors and is useful for comparing models with
     different numbers of variables.
 
     Parameters
@@ -69,7 +72,7 @@ def _adj_r2_simple_lm(x: np.ndarray, y: np.ndarray) -> float:
     x : np.ndarray
         Independent variable(s). A 1D array of predictor values.
     y : np.ndarray
-        Dependent variable. A 1D array of response values that must have the same 
+        Dependent variable. A 1D array of response values that must have the same
         length as x.
 
     Returns
@@ -110,7 +113,7 @@ def _adj_r2_simple_lm(x: np.ndarray, y: np.ndarray) -> float:
     ss_tot = np.sum((y - np.mean(y)) ** 2)
 
     if ss_tot == 0:
-        return 1.0 if ss_res == 0 else 0.0
+        return 0.0
 
     r2 = 1.0 - ss_res / ss_tot
     p = 1  # one predictor
@@ -118,3 +121,72 @@ def _adj_r2_simple_lm(x: np.ndarray, y: np.ndarray) -> float:
     if den <= 0:
         return np.nan
     return 1.0 - (1.0 - r2) * (n - 1) / den
+
+
+def _dist_td(x: np.ndarray, y: np.ndarray, td_type) -> float:
+
+    distance_metrics = {
+        "euclidean": distance.euclidean,
+        "manhattan": distance.cityblock,
+        "chebyshev": distance.chebyshev,
+        "correlation": distance.correlation,
+        "cosine": distance.cosine,
+    }
+
+    if isinstance(td_type, str):
+        try:
+            dist = distance_metrics[td_type]
+        except KeyError:
+            raise ValueError(
+                f'Distance "{td_type}" is not handled. Choose from: {list(distance_metrics)}'
+            )
+    else:  # if td_type is callable
+        dist = td_type
+    dist_val = dist(x, y)
+
+    return dist_val
+
+
+def signal_phase(signal, method="radians"):
+
+    # If binary signal
+    if len(set(np.array(signal)[~np.isnan(np.array(signal))])) == 2:
+        phase = _signal_phase_binary(signal)
+    else:
+        phase = _signal_phase_prophase(signal)
+
+    if method.lower() in ["degree", "degrees"]:
+        phase = np.rad2deg(phase)
+    if method.lower() in ["perc", "percent", "percents", "percentage"]:
+        phase = np.rad2deg(phase) / 360
+    return phase
+
+
+def _signal_phase_binary(signal):
+    phase = itertools.chain.from_iterable(
+        np.linspace(0, 1, sum([1 for i in v]), endpoint=False)
+        for _, v in itertools.groupby(signal)
+    )
+    phase = np.array(list(phase))
+
+    # Convert to radiant
+    phase = np.deg2rad(phase * 360)
+    return phase
+
+
+def _signal_phase_prophase(signal):
+    pi2 = 2.0 * np.pi
+
+    signal = np.asarray(signal, dtype=float)
+    signal = signal - np.nanmean(signal)
+
+    # Get pro-phase
+    prophase = np.mod(np.angle(scipy.signal.hilbert(signal)), pi2)
+
+    # Transform a pro-phase to a real phase
+    sort_idx = np.argsort(prophase)  # Get a sorting index
+    reverse_idx = np.argsort(sort_idx)  # Get index reversing sorting
+    tht = pi2 * np.arange(prophase.size) / (prophase.size)  # Set up sorted real phase
+    phase = tht[reverse_idx]  # Reverse the sorting of it
+
+    return phase
